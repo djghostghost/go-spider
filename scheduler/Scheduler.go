@@ -25,8 +25,8 @@ const (
 )
 
 type Scheduler interface {
-	Start(channelLen uint,
-		poolSize uint32,
+	Start(channelArgs base.ChannelArgs,
+		poolArgs base.PoolBaseArgs,
 		crawDepth uint32,
 		httpClientGenerator GenHttpClient,
 		respParsers []analyz.ParseResponse,
@@ -44,8 +44,8 @@ type Scheduler interface {
 type GenHttpClient func() *http.Client
 
 type goScheduler struct {
-	poolSize      uint32
-	channelLen    uint
+	poolArgs      base.PoolBaseArgs
+	channelArgs   base.ChannelArgs
 	crawlDepth    uint32
 	primaryDomain string
 
@@ -66,7 +66,7 @@ func NewScheduler() Scheduler {
 	return &goScheduler{}
 }
 
-func (scheduler *goScheduler) Start(channelLen uint, poolSize uint32,
+func (scheduler *goScheduler) Start(channelArgs base.ChannelArgs, poolArgs base.PoolBaseArgs,
 	crawDepth uint32, httpClientGenerator GenHttpClient,
 	respParsers []analyz.ParseResponse, itemProcessors []pipeline.ProcessItem, firstHttpReq *http.Request) (err error) {
 	defer func() {
@@ -82,25 +82,26 @@ func (scheduler *goScheduler) Start(channelLen uint, poolSize uint32,
 	}
 	atomic.StoreUint32(&scheduler.running, 1)
 
-	if channelLen == 0 {
-		return errors.New("the channel max length (capacity) can not be 0\n")
+	if err := channelArgs.Check(); err != nil {
+		return err
 	}
 
-	scheduler.channelLen = channelLen
-
-	if poolSize == 0 {
-		return errors.New("the pool size can not be 0!\n")
+	if err := poolArgs.Check(); err != nil {
+		return err
 	}
-	scheduler.poolSize = poolSize
+
+	scheduler.channelArgs = channelArgs
+	scheduler.poolArgs = poolArgs
+
 	scheduler.crawlDepth = crawDepth
 
-	scheduler.channelManager = generateChannelManager(scheduler.channelLen)
+	scheduler.channelManager = generateChannelManager(scheduler.channelArgs)
 
 	if httpClientGenerator == nil {
 		return errors.New("the http client  generator list is invalid")
 	}
 
-	downloadPool, err := generatePageDownloaderPool(scheduler.poolSize, httpClientGenerator)
+	downloadPool, err := generatePageDownloaderPool(scheduler.poolArgs.DownloaderPoolSize(), httpClientGenerator)
 
 	if err != nil {
 		errMsg := fmt.Sprintf("Occur error when get page downloader pool:%s\n", err)
@@ -109,7 +110,7 @@ func (scheduler *goScheduler) Start(channelLen uint, poolSize uint32,
 
 	scheduler.downloaderPool = downloadPool
 
-	analyzerPool, err := generateAnalyzerPool(poolSize)
+	analyzerPool, err := generateAnalyzerPool(scheduler.poolArgs.AnalyzerPoolSize())
 
 	if err != nil {
 		errMsg := fmt.Sprintf("Occur error when get analyzer pool:%s\n", err)
@@ -504,8 +505,8 @@ func generateAnalyzerPool(poolSize uint32) (analyz.AnalyzerPool, error) {
 
 }
 
-func generateChannelManager(channelLen uint) middleware.ChannelManager {
-	return middleware.NewChannelManager(channelLen)
+func generateChannelManager(channelArgs base.ChannelArgs) middleware.ChannelManager {
+	return middleware.NewChannelManager(channelArgs)
 }
 
 func generatePageDownloaderPool(poolSize uint32, httpClientGenerator GenHttpClient) (download.PageDownloaderPool, error) {
